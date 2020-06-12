@@ -18,8 +18,14 @@ Jp = ti.var(dt=ti.f32, shape=n_particles) # plastic deformation
 grid_v = ti.Vector(2, dt=ti.f32, shape=(n_grid, n_grid)) # grid node momentum/velocity
 grid_m = ti.var(dt=ti.f32, shape=(n_grid, n_grid)) # grid node mass
 
+## ADD ACTUATION PARAMETERS
+actuation = ti.var(dt=real)
+actuation_omega = 20
+act_strength = 4
+##
+
 @ti.kernel
-def substep():
+def substep(s):
   for i, j in grid_m:
     grid_v[i, j] = [0, 0]
     grid_m[i, j] = 0
@@ -49,6 +55,13 @@ def substep():
     elif material[p] == 2:
       F[p] = U @ sig @ V.T() # Reconstruct elastic deformation gradient after plasticity
     stress = 2 * mu * (F[p] - U @ V.T()) @ F[p].T() + ti.Matrix.identity(ti.f32, 2) * la * J * (J - 1)
+
+    ## ADD THE ACTUATION STRESS FOR SOLID MATERIAL
+    act = ti.sin(actuation_omega * s * dt)
+    A = ti.Matrix([[0.0, 0.0], [0.0, 1.0]]) * act
+    stress += F[p] @ A @ F[p].transpose()
+    ##
+
     stress = (-dt * p_vol * 4 * inv_dx * inv_dx) * stress
     affine = stress + p_mass * C[p]
     for i, j in ti.static(ti.ndrange(3, 3)): # Loop over 3x3 grid node neighborhood
@@ -93,7 +106,7 @@ initialize()
 gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
 while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
   for s in range(int(2e-3 // dt)):
-    substep()
+    substep(s) ## ADDED THE STEP NUMBER AS AN INPUT
   colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
   gui.circles(x.to_numpy(), radius=1.5, color=colors[material.to_numpy()])
   gui.show() # Change to gui.show(f'{frame:06d}.png') to write images to disk
