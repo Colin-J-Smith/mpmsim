@@ -21,7 +21,7 @@ grid_m = ti.var(dt=ti.f32, shape=(n_grid, n_grid)) # grid node mass
 ## ADD ACTUATION PARAMETERS
 # actuation = ti.var(dt=ti.f32)
 actuation_omega = 1000
-act_strength = 50
+act_strength = 200
 ##
 
 @ti.kernel
