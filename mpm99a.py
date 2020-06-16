@@ -58,7 +58,7 @@ def substep(f: ti.i32):
 
     ## ADD THE ACTUATION STRESS FOR SOLID MATERIAL
     if material[p] == 1: # solid material only
-      # act = 0.0
+      act = 0.0
       act = ti.sin(actuation_omega * f * dt)
       # act = ti.tanh(act)
       A = ti.Matrix.identity(ti.f32, 2) * act * act_strength  #ti.Matrix([[0.0, 0.0], [0.0, 1.0]])

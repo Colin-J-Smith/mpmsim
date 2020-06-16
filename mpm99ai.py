@@ -1,17 +1,18 @@
 import taichi as ti
 import numpy as np
+## IMPORT IMAGE TOOLS FOR INPUT INTERFACE
+import imageio
+##
 
 ti.init(arch=ti.gpu) # Try to run on GPU
-
 quality = 1 # Use a larger value for higher-res simulations
 n_particles, n_grid = 9000 * quality ** 2, 128 * quality
 dx, inv_dx = 1 / n_grid, float(n_grid)
 dt = 1e-4 / quality
 p_vol, p_rho = (dx * 0.5)**2, 1
 p_mass = p_vol * p_rho
-E, nu = 5e3, 0.2 # Young's modulus and Poisson's ratio
+E, nu = 0.1e4, 0.2 # Young's modulus and Poisson's ratio
 mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / ((1+nu) * (1 - 2 * nu)) # Lame parameters
-
 x = ti.Vector(2, dt=ti.f32, shape=n_particles) # position
 v = ti.Vector(2, dt=ti.f32, shape=n_particles) # velocity
 C = ti.Matrix(2, 2, dt=ti.f32, shape=n_particles) # affine velocity field
@@ -20,12 +21,15 @@ material = ti.var(dt=ti.i32, shape=n_particles) # material id
 Jp = ti.var(dt=ti.f32, shape=n_particles) # plastic deformation
 grid_v = ti.Vector(2, dt=ti.f32, shape=(n_grid, n_grid)) # grid node momentum/velocity
 grid_m = ti.var(dt=ti.f32, shape=(n_grid, n_grid)) # grid node mass
-gravity = ti.Vector(2, dt=ti.f32, shape=())
-attractor_strength = ti.var(dt=ti.f32, shape=())
-attractor_pos = ti.Vector(2, dt=ti.f32, shape=())
+
+## ADD ACTUATION PARAMETERS
+# actuation = ti.var(dt=ti.f32)
+actuation_omega = 1000
+act_strength = 50
+##
 
 @ti.kernel
-def substep():
+def substep(f: ti.i32):
   for i, j in grid_m:
     grid_v[i, j] = [0, 0]
     grid_m[i, j] = 0
@@ -35,7 +39,7 @@ def substep():
     # Quadratic kernels  [http://mpm.graphics   Eqn. 123, with x=fx, fx-1,fx-2]
     w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
     F[p] = (ti.Matrix.identity(ti.f32, 2) + dt * C[p]) @ F[p] # deformation gradient update
-    h = max(0.1, min(5, ti.exp(10 * (1.0 - Jp[p])))) # Hardening coefficient: snow gets harder when compressed
+    h = ti.exp(10 * (1.0 - Jp[p])) # Hardening coefficient: snow gets harder when compressed
     if material[p] == 1: # jelly, make it softer
       h = 0.3
     mu, la = mu_0 * h, lambda_0 * h
@@ -55,6 +59,16 @@ def substep():
     elif material[p] == 2:
       F[p] = U @ sig @ V.T() # Reconstruct elastic deformation gradient after plasticity
     stress = 2 * mu * (F[p] - U @ V.T()) @ F[p].T() + ti.Matrix.identity(ti.f32, 2) * la * J * (J - 1)
+
+    ## ADD THE ACTUATION STRESS FOR SOLID MATERIAL
+    if material[p] == 1: # solid material only
+      act = 0.0
+      act = ti.sin(actuation_omega * f * dt)
+      # act = ti.tanh(act)
+      A = ti.Matrix.identity(ti.f32, 2) * act * act_strength  #ti.Matrix([[0.0, 0.0], [0.0, 1.0]])
+      stress += F[p] @ A @ F[p].T()
+    ##
+
     stress = (-dt * p_vol * 4 * inv_dx * inv_dx) * stress
     affine = stress + p_mass * C[p]
     for i, j in ti.static(ti.ndrange(3, 3)): # Loop over 3x3 grid node neighborhood
@@ -66,9 +80,7 @@ def substep():
   for i, j in grid_m:
     if grid_m[i, j] > 0: # No need for epsilon here
       grid_v[i, j] = (1 / grid_m[i, j]) * grid_v[i, j] # Momentum to velocity
-      grid_v[i, j] += dt * gravity[None] * 30 # gravity
-      dist = attractor_pos[None] - dx * ti.Vector([i, j])
-      grid_v[i, j] += dist / (0.01 + dist.norm()) * attractor_strength[None] * dt * 100
+      grid_v[i, j][1] -= dt * 50 # gravity
       if i < 3 and grid_v[i, j][0] < 0:          grid_v[i, j][0] = 0 # Boundary conditions
       if i > n_grid - 3 and grid_v[i, j][0] > 0: grid_v[i, j][0] = 0
       if j < 3 and grid_v[i, j][1] < 0:          grid_v[i, j][1] = 0
@@ -88,41 +100,32 @@ def substep():
     v[p], C[p] = new_v, new_C
     x[p] += dt * v[p] # advection
 
+group_size = n_particles // 3
 @ti.kernel
-def reset():
-  group_size = n_particles // 3
+def initialize():
   for i in range(n_particles):
-    x[i] = [ti.random() * 0.2 + 0.3 + 0.10 * (i // group_size), ti.random() * 0.2 + 0.05 + 0.32 * (i // group_size)]
-    material[i] = i // group_size # 0: fluid 1: jelly 2: snow
-    v[i] = [0, 0]
+    ## ADD LOGIC HERE TO CONVERT PNG INTO PARTICLES
+    x[i] = [ti.random() * 0.2 + 0.3 + 0.10 * (i // group_size), ti.random() * 0.2 + 0.05 + 0.32 * (i // group_size)] ## REPLACE THIS
+
+    # iterate through all the pixels in the image
+    # if a pixel contains one of the predetermined color values, add a particle at that [x,y] location
+    ##
+
+    ## REPLACE THIS SECTION WITH NEW MATERIAL ASSIGNMENT
+    material[i] = i // group_size # 0: fluid 1: jelly 2: snow ## REPLACE THIS
+
+    ##
+
+    v[i] = ti.Matrix([0, 0])
     F[i] = ti.Matrix([[1, 0], [0, 1]])
     Jp[i] = 1
-    C[i] = ti.Matrix.zero(ti.f32, 2, 2)
-  
-print("[Hint] Use WSAD/arrow keys to control gravity. Use left/right mouse bottons to attract/repel. Press R to reset.")
-gui = ti.GUI("Taichi MLS-MPM-128", res=512, background_color=0x112F41)
-reset()
-gravity[None] = [0, -1]
-
-for frame in range(20000):
-  while gui.get_event(ti.GUI.PRESS):
-    if gui.event.key == 'r': reset()
-    elif gui.event.key in [ti.GUI.ESCAPE, ti.GUI.EXIT]: exit(0)
-  if gui.event is not None: gravity[None] = [0, 0] # if had any event
-  if gui.is_pressed(ti.GUI.LEFT,  'a'): gravity[None][0] = -1
-  if gui.is_pressed(ti.GUI.RIGHT, 'd'): gravity[None][0] = 1
-  if gui.is_pressed(ti.GUI.UP,    'w'): gravity[None][1] = 1
-  if gui.is_pressed(ti.GUI.DOWN,  's'): gravity[None][1] = -1
-  mouse = gui.get_cursor_pos()
-  gui.circle((mouse[0], mouse[1]), color=0x336699, radius=15)
-  attractor_pos[None] = [mouse[0], mouse[1]]
-  attractor_strength[None] = 0
-  if gui.is_pressed(ti.GUI.LMB):
-    attractor_strength[None] = 1
-  if gui.is_pressed(ti.GUI.RMB):
-    attractor_strength[None] = -1
+initialize()
+gui = ti.GUI("Taichi MLS-MPM-99ai", res=512, background_color=0x112F41)
+f = 0 ## ADDED A FRAME COUNTER
+while gui.running:
+  f += 1
   for s in range(int(2e-3 // dt)):
-    substep()
+    substep(f) ## ADDED THE STEP NUMBER AS AN INPUT
   colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
   gui.circles(x.to_numpy(), radius=1.5, color=colors[material.to_numpy()])
   gui.show() # Change to gui.show(f'{frame:06d}.png') to write images to disk
