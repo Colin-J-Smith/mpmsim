@@ -6,7 +6,25 @@ import imageio
 
 ti.init(arch=ti.gpu) # Try to run on GPU
 quality = 1 # Use a larger value for higher-res simulations
-n_particles, n_grid = 9000 * quality ** 2, 128 * quality
+
+## COUNT THE NUMBER OF FILLED PIXELS IN THE IMAGE
+im = imageio.imread('mpmsim/test_img.png')[:,:,0]
+# convert to occupancy matrix with material assignments
+occ = np.zeros(im.shape)
+for i in range(im.shape[0]):
+  for j in range(im.shape[1]):
+    if im[i,j] == 62: #static material
+      occ[i,j] = 1
+    elif im[i,j] == 30: #actuated material
+      occ[i,j] = 2
+    else: #no material
+      occ[i,j] = 0
+n_particles = np.count_nonzero(occ) * quality**2
+n_grid = occ.shape[0] * quality
+##
+
+
+# n_particles, n_grid = 9000 * quality ** 2, 128 * quality
 dx, inv_dx = 1 / n_grid, float(n_grid)
 dt = 1e-4 / quality
 p_vol, p_rho = (dx * 0.5)**2, 1
@@ -103,22 +121,42 @@ def substep(f: ti.i32):
 group_size = n_particles // 3
 @ti.kernel
 def initialize():
-  for i in range(n_particles):
-    ## ADD LOGIC HERE TO CONVERT PNG INTO PARTICLES
-    x[i] = [ti.random() * 0.2 + 0.3 + 0.10 * (i // group_size), ti.random() * 0.2 + 0.05 + 0.32 * (i // group_size)] ## REPLACE THIS
+  k = 0
+  for i in range(occ.shape[0]):
+    for j in range(occ.shape[1]):
+      if occ[i,j] == 1: #static material
+        x[k] =  i, j
+        material[k] = 0
+        k = k + 1
+      elif occ[i,j] == 2: #actuated material
+        x[k] = i, j
+        material[k] = 1
+        k = k + 1
+      else: #no material
+        pass
 
-    # iterate through all the pixels in the image
-    # if a pixel contains one of the predetermined color values, add a particle at that [x,y] location
-    ##
+      v[k] = ti.Matrix([0, 0])
+      F[k] = ti.Matrix([[1, 0], [0, 1]])
+      Jp[k] = 1
+      
 
-    ## REPLACE THIS SECTION WITH NEW MATERIAL ASSIGNMENT
-    material[i] = i // group_size # 0: fluid 1: jelly 2: snow ## REPLACE THIS
+  # for i in range(n_particles):
+  #   ## ADD LOGIC HERE TO CONVERT PNG INTO PARTICLES
+  #   # x[i] = [ti.random() * 0.2 + 0.3 + 0.10 * (i // group_size), ti.random() * 0.2 + 0.05 + 0.32 * (i // group_size)] ## REPLACE THIS
+  #   x[i] = ,
 
-    ##
+  #   # iterate through all the pixels in the image
+  #   # if a pixel contains one of the predetermined color values, add a particle at that [x,y] location
+  #   ##
 
-    v[i] = ti.Matrix([0, 0])
-    F[i] = ti.Matrix([[1, 0], [0, 1]])
-    Jp[i] = 1
+  #   ## REPLACE THIS SECTION WITH NEW MATERIAL ASSIGNMENT
+  #   material[i] = i // group_size # 0: fluid 1: jelly 2: snow ## REPLACE THIS
+
+  #   ##
+
+  #   v[i] = ti.Matrix([0, 0])
+  #   F[i] = ti.Matrix([[1, 0], [0, 1]])
+  #   Jp[i] = 1
 initialize()
 gui = ti.GUI("Taichi MLS-MPM-99ai", res=512, background_color=0x112F41)
 f = 0 ## ADDED A FRAME COUNTER
